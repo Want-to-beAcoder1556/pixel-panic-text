@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D ASCII Box Engine</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Colored ASCII Textbox Snake</title>
     <style>
         body {
             margin: 0;
@@ -17,23 +17,22 @@
             align-items: center;
             height: 100vh;
             user-select: none;
+            touch-action: none;
         }
 
         #game-container {
             position: relative;
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             width: 100%;
-            height: 100%;
         }
 
-        /* * Replaced textarea with a <pre> block so we can use inline colors! 
-         * Styled to look exactly like the previous textbox.
-         */
+        /* The Colored Text Canvas */
         #screen {
             background-color: #000000;
-            color: #00ffaa;
+            color: #ffffff;
             font-family: 'Courier New', Courier, monospace;
             border: 2px solid #00ffaa;
             border-radius: 8px;
@@ -41,332 +40,339 @@
             padding: 10px;
             overflow: hidden;
             white-space: pre;
-            cursor: crosshair;
             box-shadow: 0 0 20px rgba(0, 255, 170, 0.2);
+            line-height: 1;
         }
 
         #ui-layer {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            pointer-events: none;
+            margin-bottom: 10px;
             font-weight: bold;
             text-shadow: 1px 1px 0 #000, 2px 2px 4px rgba(0,255,170,0.5);
-            font-size: 1.2rem;
-            z-index: 10;
-        }
-
-        .instructions {
-            position: absolute;
-            bottom: 20px;
-            text-align: center;
-            width: 100%;
-            pointer-events: none;
-            color: #88ffcc;
-            font-size: 0.9rem;
-            opacity: 0.8;
-            z-index: 10;
+            font-size: 1.5rem;
         }
 
         #game-over-ui {
             position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
             display: none;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            background: rgba(0,0,0,0.85);
+            background: rgba(0,0,0,0.9);
             border: 2px solid #ff0055;
             padding: 30px;
             border-radius: 12px;
             color: #fff;
             text-shadow: 2px 2px 0 #000;
             z-index: 20;
+            text-align: center;
         }
         
         #game-over-ui h2 { margin: 0 0 10px 0; color: #ff0055; font-size: 2.5rem; }
         #game-over-ui p { margin: 5px 0; font-size: 1.2rem; }
+
+        /* Mobile D-Pad Controls */
+        .d-pad {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            gap: 10px;
+            margin-top: 20px;
+            width: 200px;
+            height: 200px;
+        }
+
+        .d-btn {
+            background-color: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            color: #fff;
+            cursor: pointer;
+        }
+
+        .d-btn:active { background-color: rgba(255, 255, 255, 0.3); }
+
+        .up { grid-column: 2; grid-row: 1; }
+        .left { grid-column: 1; grid-row: 2; }
+        .right { grid-column: 3; grid-row: 2; }
+        .down { grid-column: 2; grid-row: 3; }
+
+        @media (min-width: 768px) {
+            .d-pad { display: none; } /* Hide on PC */
+        }
     </style>
 </head>
 <body>
 
     <div id="game-container">
-        <!-- Colored Text Canvas -->
-        <pre id="screen"></pre>
-        
         <div id="ui-layer">
             SCORE: <span id="score">0</span>
         </div>
+
+        <!-- The Text Engine Display -->
+        <pre id="screen"></pre>
         
         <div id="game-over-ui">
-            <h2>CRASH!</h2>
-            <p>Score: <span id="final-score">0</span></p>
-            <p style="font-size: 0.8rem; margin-top: 15px; color: #ffcc00;">[ Press ENTER or SPACE to Restart ]</p>
+            <h2>GAME OVER</h2>
+            <p>Final Score: <span id="final-score">0</span></p>
+            <p style="font-size: 0.8rem; margin-top: 15px; color: #ffcc00;">[ Press ENTER to Restart ]</p>
         </div>
 
-        <div class="instructions">
-            [ A / D ] or [ Arrow Keys ] to Move<br>
-            Tap left/right side of screen on Mobile<br>
-            Avoid the incoming 3D blocks!
+        <!-- Mobile Controls -->
+        <div class="d-pad">
+            <div class="d-btn up" id="btn-up">▲</div>
+            <div class="d-btn left" id="btn-left">◀</div>
+            <div class="d-btn right" id="btn-right">▶</div>
+            <div class="d-btn down" id="btn-down">▼</div>
         </div>
     </div>
 
     <script>
-        // Game Constants & Engine Setup
-        const width = 120;  // Character columns (Good detail, balanced size)
-        const height = 50;  // Character rows (Good detail, balanced size)
+        // --- Engine & Grid Setup ---
+        const width = 40;  // Columns in the textbox
+        const height = 24; // Rows in the textbox
         const screen = document.getElementById('screen');
         const scoreEl = document.getElementById('score');
         const gameOverUi = document.getElementById('game-over-ui');
         const finalScoreEl = document.getElementById('final-score');
 
-        // Character density gradient from darkest (background) to brightest (highlights)
-        const chars = " .:-=+*#%@"; 
-        const obsColors = ["#ff3366", "#33ccff", "#ffdd33", "#cc33ff", "#ff8833", "#33ff55"];
-        
-        let aspectAdjustment = 1.0;
+        // Color Palette
+        const C_WALL  = "#445566"; // Border wall color
+        const C_EMPTY = "#1a1a20"; // Background dots
+        const C_HEAD  = "#00ffcc"; // Snake Head
+        const C_BODY  = "#00aa88"; // Snake Body
+        const C_FOOD  = "#ff3366"; // Food
 
-        // Auto-scale font size to fit grid
+        // Characters for different objects
+        const CHAR_WALL  = "#";
+        const CHAR_EMPTY = ".";
+        const CHAR_HEAD  = "@";
+        const CHAR_BODY  = "O";
+        const CHAR_FOOD  = "*";
+
+        // Auto-scale font size to fit the screen
         function resize() {
             let w = window.innerWidth;
             let h = window.innerHeight;
+            let dPadHeight = window.innerWidth < 768 ? 250 : 50; // Leave space for controls on mobile
             let charAspect = 0.6;
             
             let fontSizeW = (w * 0.9) / (width * charAspect);
-            let fontSizeH = (h * 0.8) / height;
+            let fontSizeH = ((h - dPadHeight) * 0.8) / height;
             let fontSize = Math.min(fontSizeW, fontSizeH);
             
             screen.style.fontSize = fontSize + "px";
             screen.style.lineHeight = fontSize + "px";
-            aspectAdjustment = (width / height) * charAspect;
         }
         window.addEventListener('resize', resize);
         resize();
 
-        // 3D Vector Math
-        function length(x, y, z) { return Math.sqrt(x*x + y*y + z*z); }
-        
-        function rotX(v, a) {
-            let c = Math.cos(a), s = Math.sin(a);
-            return { x: v.x, y: v.y * c - v.z * s, z: v.y * s + v.z * c };
-        }
-        function rotY(v, a) {
-            let c = Math.cos(a), s = Math.sin(a);
-            return { x: v.x * c + v.z * s, y: v.y, z: -v.x * s + v.z * c };
-        }
-
-        function sdBox(p, b) {
-            let dx = Math.abs(p.x) - b.x;
-            let dy = Math.abs(p.y) - b.y;
-            let dz = Math.abs(p.z) - b.z;
-            return length(Math.max(dx, 0), Math.max(dy, 0), Math.max(dz, 0)) + Math.min(Math.max(dx, Math.max(dy, dz)), 0.0);
-        }
-
         // --- Game State ---
-        let playerX = 0;
-        let targetPlayerX = 0;
-        let obstacles = [];
-        let time = 0;
+        let snake = [];
+        let food = { x: 0, y: 0 };
+        let dx = 0;
+        let dy = 0;
         let score = 0;
         let gameOver = false;
-        let speed = 0.3;
+        let inputQueue = [];
+        
+        let lastRenderTime = 0;
+        let baseSpeed = 10; // Frames per second
 
-        // --- Input Handling ---
-        window.addEventListener('keydown', (e) => {
-            if (gameOver) {
-                if (e.key === 'Enter' || e.key === ' ') resetGame();
+        function init() {
+            // Start snake in the center
+            snake = [
+                { x: Math.floor(width/2), y: Math.floor(height/2) },
+                { x: Math.floor(width/2), y: Math.floor(height/2) + 1 },
+                { x: Math.floor(width/2), y: Math.floor(height/2) + 2 }
+            ];
+            dx = 0;
+            dy = -1;
+            score = 0;
+            gameOver = false;
+            inputQueue = [];
+            scoreEl.innerText = score;
+            gameOverUi.style.display = 'none';
+            
+            placeFood();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function placeFood() {
+            let valid = false;
+            while (!valid) {
+                // Ensure food spawns inside the walls
+                food = {
+                    x: Math.floor(Math.random() * (width - 2)) + 1,
+                    y: Math.floor(Math.random() * (height - 2)) + 1
+                };
+                
+                valid = true;
+                for (let segment of snake) {
+                    if (segment.x === food.x && segment.y === food.y) {
+                        valid = false;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // --- Main Game Loop ---
+        function gameLoop(currentTime) {
+            if (gameOver) return;
+            window.requestAnimationFrame(gameLoop);
+
+            const secondsSinceLastRender = (currentTime - lastRenderTime) / 1000;
+            const currentSpeed = baseSpeed + (score * 0.2); 
+            
+            if (secondsSinceLastRender < 1 / currentSpeed) return;
+            lastRenderTime = currentTime;
+
+            update();
+            renderFrame();
+        }
+
+        function update() {
+            if (inputQueue.length > 0) {
+                const nextInput = inputQueue.shift();
+                dx = nextInput.dx;
+                dy = nextInput.dy;
+            }
+
+            const head = { x: snake[0].x + dx, y: snake[0].y + dy };
+
+            // Wall Collision Check
+            if (head.x <= 0 || head.x >= width - 1 || head.y <= 0 || head.y >= height - 1) {
+                triggerGameOver();
                 return;
             }
-            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') targetPlayerX -= 1.8;
-            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') targetPlayerX += 1.8;
-            targetPlayerX = Math.max(-4.5, Math.min(4.5, targetPlayerX));
-        });
 
-        window.addEventListener('touchstart', (e) => {
-            if (gameOver) { resetGame(); return; }
-            let touchX = e.touches[0].clientX;
-            if (touchX < window.innerWidth / 2) targetPlayerX -= 1.8;
-            else targetPlayerX += 1.8;
-            targetPlayerX = Math.max(-4.5, Math.min(4.5, targetPlayerX));
-        });
-
-        function resetGame() {
-            score = 0;
-            speed = 0.3;
-            obstacles = [];
-            playerX = 0;
-            targetPlayerX = 0;
-            gameOver = false;
-            scoreEl.innerText = score;
-            gameOverUi.style.display = "none";
-            gameLoop();
-        }
-
-        // --- 3D Scene Map ---
-        let currentMat = "#000000";
-
-        // Calculates distance to the nearest surface, and saves its color if asked
-        function mapScene(p, saveMaterial = false) {
-            let d = 1000.0; // Start with a very large distance (removed ground plane)
-            let mat = "#000000"; // Default empty space color
-
-            // Player Box
-            let pPlayer = {x: p.x - playerX, y: p.y - (-1), z: p.z - (-2)};
-            let dPlayer = sdBox(pPlayer, {x: 0.6, y: 0.6, z: 0.6});
-            if (dPlayer < d) { d = dPlayer; mat = "#ffffff"; }
-
-            // Obstacle Boxes
-            for (let i = 0; i < obstacles.length; i++) {
-                let obs = obstacles[i];
-                let pObs = {x: p.x - obs.x, y: p.y - obs.y, z: p.z - obs.z};
-                pObs = rotY(pObs, time * 2.5 + i);
-                pObs = rotX(pObs, time * 2.0 + i);
-                let dObs = sdBox(pObs, {x: obs.w, y: obs.h, z: obs.d});
-                
-                if (dObs < d) { d = dObs; mat = obs.color; }
+            // Self Collision Check
+            for (let i = 0; i < snake.length; i++) {
+                if (head.x === snake[i].x && head.y === snake[i].y) {
+                    triggerGameOver();
+                    return;
+                }
             }
-            
-            if (saveMaterial) currentMat = mat;
-            return d;
+
+            snake.unshift(head);
+
+            if (head.x === food.x && head.y === food.y) {
+                score += 10;
+                scoreEl.innerText = score;
+                placeFood();
+            } else {
+                snake.pop();
+            }
         }
 
-        function calcNormal(p) {
-            const e = 0.01;
-            const d = mapScene(p);
-            return {
-                x: mapScene({x: p.x + e, y: p.y, z: p.z}) - d,
-                y: mapScene({x: p.x, y: p.y + e, z: p.z}) - d,
-                z: mapScene({x: p.x, y: p.y, z: p.z + e}) - d
-            };
-        }
-
-        function normalize(v) {
-            let l = length(v.x, v.y, v.z);
-            if (l === 0) return {x:0, y:0, z:0};
-            return {x: v.x/l, y: v.y/l, z: v.z/l};
-        }
-
-        // --- The Colored ASCII Renderer ---
+        // --- The Colored Text Renderer ---
         function renderFrame() {
+            // 1. Create a 2D array to hold our text frame
+            let buffer = [];
+            for (let y = 0; y < height; y++) {
+                let row = [];
+                for (let x = 0; x < width; x++) {
+                    // Draw borders
+                    if (y === 0 || y === height - 1 || x === 0 || x === width - 1) {
+                        row.push({ char: CHAR_WALL, color: C_WALL });
+                    } else {
+                        row.push({ char: CHAR_EMPTY, color: C_EMPTY });
+                    }
+                }
+                buffer.push(row);
+            }
+
+            // 2. Draw Food into the buffer
+            buffer[food.y][food.x] = { char: CHAR_FOOD, color: C_FOOD };
+
+            // 3. Draw Snake into the buffer
+            for (let i = 0; i < snake.length; i++) {
+                let seg = snake[i];
+                if (i === 0) {
+                    buffer[seg.y][seg.x] = { char: CHAR_HEAD, color: C_HEAD };
+                } else {
+                    buffer[seg.y][seg.x] = { char: CHAR_BODY, color: C_BODY };
+                }
+            }
+
+            // 4. Convert buffer array to colored HTML String
             let output = "";
             let lastColor = null;
-            let lightDir = normalize({x: -1, y: 2.5, z: -1});
-            let ro = {x: 0, y: 1.5, z: -8}; 
-            let camPitch = 0.25; 
 
             for (let y = 0; y < height; y++) {
                 for (let x = 0; x < width; x++) {
-                    let uvX = (x / width) * 2 - 1;
+                    let cell = buffer[y][x];
                     
-                    // FIXED: Inverted the Y axis so the camera projects right-side up!
-                    let uvY = 1.0 - (y / height) * 2.0; 
-                    
-                    uvX *= aspectAdjustment;
-
-                    let rd = normalize({x: uvX, y: uvY, z: 1.0});
-                    rd = rotX(rd, camPitch);
-
-                    let t = 0;
-                    let hit = false;
-                    
-                    for (let i = 0; i < 40; i++) {
-                        let p = {x: ro.x + rd.x * t, y: ro.y + rd.y * t, z: ro.z + rd.z * t};
-                        let d = mapScene(p);
-                        if (d < 0.01) { hit = true; break; }
-                        t += d;
-                        if (t > 35.0) break;
+                    // Optimization: Only open a new <span> if the color changes!
+                    if (cell.color !== lastColor) {
+                        if (lastColor !== null) output += "</span>";
+                        output += `<span style="color:${cell.color}">`;
+                        lastColor = cell.color;
                     }
-
-                    if (hit) {
-                        let p = {x: ro.x + rd.x * t, y: ro.y + rd.y * t, z: ro.z + rd.z * t};
-                        let n = normalize(calcNormal(p));
-                        
-                        // Extract color exactly at collision point
-                        mapScene(p, true);
-                        let charColor = currentMat;
-
-                        let diff = Math.max(0, n.x * lightDir.x + n.y * lightDir.y + n.z * lightDir.z);
-                        let intensity = 0.15 + diff * 0.85;
-
-                        // Soft Shadows
-                        let shadowHit = false;
-                        let st = 0.05;
-                        for(let i=0; i < 15; i++) {
-                            let sp = {x: p.x + lightDir.x * st, y: p.y + lightDir.y * st, z: p.z + lightDir.z * st};
-                            let sd = mapScene(sp);
-                            if(sd < 0.01) { shadowHit = true; break; }
-                            st += sd;
-                            if(st > 10.0) break;
-                        }
-                        if (shadowHit) intensity *= 0.35;
-
-                        let charIndex = Math.max(0, Math.min(chars.length - 1, Math.floor(intensity * chars.length)));
-                        let char = chars[charIndex];
-
-                        // Open/close HTML spans ONLY when the color changes to maximize speed
-                        if (charColor !== lastColor) {
-                            if (lastColor !== null) output += "</span>";
-                            output += `<span style="color:${charColor}">`;
-                            lastColor = charColor;
-                        }
-                        output += char;
-
-                    } else {
-                        // Empty space doesn't need a color span
-                        if (lastColor !== null) {
-                            output += "</span>";
-                            lastColor = null;
-                        }
-                        output += " ";
-                    }
+                    output += cell.char;
                 }
                 output += "\n";
             }
             if (lastColor !== null) output += "</span>";
-            
-            // Push final assembled HTML string to the screen buffer
+
+            // 5. Blast it to the screen!
             screen.innerHTML = output;
         }
 
-        // --- Main Game Loop ---
-        function gameLoop() {
-            if (!gameOver) {
-                playerX += (targetPlayerX - playerX) * 0.25;
+        function triggerGameOver() {
+            gameOver = true;
+            finalScoreEl.innerText = score;
+            gameOverUi.style.display = 'flex';
+        }
 
-                if (Math.random() < 0.06 + (score * 0.001)) {
-                    let ox = (Math.floor(Math.random() * 5) - 2) * 1.8;
-                    let randColor = obsColors[Math.floor(Math.random() * obsColors.length)];
-                    obstacles.push({x: ox, y: -1, z: 25, w: 0.7, h: 0.7, d: 0.7, color: randColor});
-                }
-
-                for (let i = obstacles.length - 1; i >= 0; i--) {
-                    let obs = obstacles[i];
-                    obs.z -= speed;
-
-                    if (Math.abs(obs.x - playerX) < 1.3 && Math.abs(obs.z - (-2.0)) < 1.3) {
-                        gameOver = true;
-                        finalScoreEl.innerText = score;
-                        gameOverUi.style.display = "flex";
-                    }
-
-                    if (obs.z < -6) {
-                        obstacles.splice(i, 1);
-                        score++;
-                        scoreEl.innerText = score;
-                        speed += 0.005;
-                    }
-                }
-                time += 0.05;
+        // --- Controls ---
+        function changeDirection(newDx, newDy) {
+            let currentDx = dx, currentDy = dy;
+            if (inputQueue.length > 0) {
+                currentDx = inputQueue[inputQueue.length - 1].dx;
+                currentDy = inputQueue[inputQueue.length - 1].dy;
             }
 
-            renderFrame();
-            
-            if (!gameOver) {
-                requestAnimationFrame(gameLoop);
+            // Can't reverse into yourself
+            if (newDx !== 0 && currentDx === -newDx) return;
+            if (newDy !== 0 && currentDy === -newDy) return;
+
+            if (inputQueue.length < 2) {
+                inputQueue.push({ dx: newDx, dy: newDy });
             }
         }
 
-        // Start
-        gameLoop();
+        window.addEventListener('keydown', (e) => {
+            if(["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].indexOf(e.code) > -1) {
+                e.preventDefault();
+            }
+
+            switch (e.key) {
+                case 'ArrowUp':   case 'w': case 'W': changeDirection(0, -1); break;
+                case 'ArrowDown': case 's': case 'S': changeDirection(0, 1); break;
+                case 'ArrowLeft': case 'a': case 'A': changeDirection(-1, 0); break;
+                case 'ArrowRight':case 'd': case 'D': changeDirection(1, 0); break;
+                case 'Enter':     case ' ': if (gameOver) init(); break;
+            }
+        });
+
+        // Mobile D-Pad
+        const dpadMap = { 'btn-up': [0,-1], 'btn-down': [0,1], 'btn-left': [-1,0], 'btn-right': [1,0] };
+        for (const [id, dir] of Object.entries(dpadMap)) {
+            let el = document.getElementById(id);
+            el.addEventListener('touchstart', (e) => { e.preventDefault(); changeDirection(dir[0], dir[1]); });
+            el.addEventListener('mousedown', () => changeDirection(dir[0], dir[1]));
+        }
+
+        // Start!
+        init();
     </script>
 </body>
 </html>
