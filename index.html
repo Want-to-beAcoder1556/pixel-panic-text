@@ -112,8 +112,8 @@
 
     <script>
         // Game Constants & Engine Setup
-        const width = 1000;  // Character columns (5x smaller text, higher detail)
-        const height = 450;  // Character rows (5x smaller text, higher detail)
+        const width = 2500;  // Character columns (Extremely tiny text, maximum detail)
+        const height = 1125;  // Character rows (Extremely tiny text, maximum detail)
         const screen = document.getElementById('screen');
         const scoreEl = document.getElementById('score');
         const gameOverUi = document.getElementById('game-over-ui');
@@ -206,8 +206,8 @@
 
         // Calculates distance to the nearest surface, and saves its color if asked
         function mapScene(p, saveMaterial = false) {
-            let d = p.y + 2.0; // Ground Plane
-            let mat = "#00ffaa"; // Default ground color
+            let d = 1000.0; // Start with a very large distance (removed ground plane)
+            let mat = "#000000"; // Default empty space color
 
             // Player Box
             let pPlayer = {x: p.x - playerX, y: p.y - (-1), z: p.z - (-2)};
@@ -298,16 +298,6 @@
                             if(st > 10.0) break;
                         }
                         if (shadowHit) intensity *= 0.35;
-
-                        // Ground Checkerboard Effect
-                        if (charColor === "#00ffaa" && Math.abs(p.y - (-2.0)) < 0.05) {
-                            let gridX = Math.floor(p.x * 2.0) % 2;
-                            let gridZ = Math.floor((p.z - time * 5.0) * 2.0) % 2; 
-                            if ((gridX === 0) !== (gridZ === 0)) {
-                                intensity *= 0.4;
-                                charColor = "#008866"; // Darker green grid
-                            }
-                        }
 
                         let charIndex = Math.max(0, Math.min(chars.length - 1, Math.floor(intensity * chars.length)));
                         let char = chars[charIndex];
