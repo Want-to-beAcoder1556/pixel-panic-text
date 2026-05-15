@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D ASCII Box Engine</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0d0d12;
+            color: #00ffcc;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* * This is the literal textbox that will act as our 3D canvas 
+         * Resize and spellcheck are disabled to maintain the grid.
+         */
+        #screen {
+            background-color: #000000;
+            color: #00ffaa;
+            font-family: 'Courier New', Courier, monospace;
+            border: 2px solid #00ffaa;
+            border-radius: 8px;
+            resize: none;
+            outline: none;
+            overflow: hidden;
+            white-space: pre;
+            cursor: crosshair;
+            box-shadow: 0 0 20px rgba(0, 255, 170, 0.2);
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            font-weight: bold;
+            text-shadow: 1px 1px 0 #000, 2px 2px 4px rgba(0,255,170,0.5);
+            font-size: 1.2rem;
+        }
+
+        .instructions {
+            position: absolute;
+            bottom: 20px;
+            text-align: center;
+            width: 100%;
+            pointer-events: none;
+            color: #88ffcc;
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <!-- The Textbox "Canvas" -->
+        <textarea id="screen" readonly spellcheck="false"></textarea>
+        
+        <div id="ui-layer">
+            SCORE: <span id="score">0</span>
+        </div>
+        <div class="instructions">
+            [ A / D ] or [ Arrow Keys ] to Move<br>
+            Tap left/right side of screen on Mobile<br>
+            Avoid the incoming 3D blocks!
+        </div>
+    </div>
+
+    <script>
+        // Game Constants & Engine Setup
+        const width = 100;  // Character columns
+        const height = 45;  // Character rows
+        const screen = document.getElementById('screen');
+        const scoreEl = document.getElementById('score');
+
+        // Character density gradient from darkest (background) to brightest (highlights)
+        const chars = " .:-=+*#%@"; 
+        
+        // Aspect ratio adjustment for Courier New (chars are usually taller than they are wide)
+        let aspectAdjustment = 1.0;
+
+        // Automatically scale font size so the 100x45 grid fits perfectly on any device
+        function resize() {
+            let w = window.innerWidth;
+            let h = window.innerHeight;
+            // Typical monospace char aspect ratio is ~0.6
+            let charAspect = 0.6;
+            
+            // Calculate maximum font size that fits the screen dimensions
+            let fontSizeW = (w * 0.9) / (width * charAspect);
+            let fontSizeH = (h * 0.8) / height;
+            let fontSize = Math.min(fontSizeW, fontSizeH);
+            
+            screen.style.fontSize = fontSize + "px";
+            screen.style.lineHeight = fontSize + "px";
+            screen.cols = width;
+            screen.rows = height;
+            
+            // Update the 3D raymarching aspect ratio correction
+            aspectAdjustment = (width / height) * charAspect;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // 3D Vector Math & Utilities
+        function length(x, y, z) { return Math.sqrt(x*x + y*y + z*z); }
+        
+        // 3D Rotations
+        function rotX(v, a) {
+            let c = Math.cos(a), s = Math.sin(a);
+            return { x: v.x, y: v.y * c - v.z * s, z: v.y * s + v.z * c };
+        }
+        function rotY(v, a) {
+            let c = Math.cos(a), s = Math.sin(a);
+            return { x: v.x * c + v.z * s, y: v.y, z: -v.x * s + v.z * c };
+        }
+
+        // Signed Distance Function (SDF) for a 3D Box
+        function sdBox(p, b) {
+            let dx = Math.abs(p.x) - b.x;
+            let dy = Math.abs(p.y) - b.y;
+            let dz = Math.abs(p.z) - b.z;
+            let outDist = length(Math.max(dx, 0), Math.max(dy, 0), Math.max(dz, 0));
+            let inDist = Math.min(Math.max(dx, Math.max(dy, dz)), 0.0);
+            return outDist + inDist;
+        }
+
+        // --- Game State ---
+        let playerX = 0;
+        let targetPlayerX = 0;
+        let obstacles = [];
+        let time = 0;
+        let score = 0;
+        let gameOver = false;
+        let speed = 0.3;
+
+        // --- Input Handling ---
+        window.addEventListener('keydown', (e) => {
+            if (gameOver) {
+                if (e.key === 'Enter' || e.key === ' ') resetGame();
+                return;
+            }
+            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') targetPlayerX -= 1.8;
+            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') targetPlayerX += 1.8;
+            targetPlayerX = Math.max(-4.5, Math.min(4.5, targetPlayerX));
+        });
+
+        // Touch input for mobile
+        window.addEventListener('touchstart', (e) => {
+            if (gameOver) { resetGame(); return; }
+            let touchX = e.touches[0].clientX;
+            if (touchX < window.innerWidth / 2) targetPlayerX -= 1.8;
+            else targetPlayerX += 1.8;
+            targetPlayerX = Math.max(-4.5, Math.min(4.5, targetPlayerX));
+        });
+
+        function resetGame() {
+            score = 0;
+            speed = 0.3;
+            obstacles = [];
+            playerX = 0;
+            targetPlayerX = 0;
+            gameOver = false;
+            scoreEl.innerText = score;
+            gameLoop();
+        }
+
+        // --- 3D Scene Map (Raymarching SDF) ---
+        // Maps the world coordinates to the closest surface distance
+        function mapScene(p) {
+            // Ground Plane
+            let d = p.y + 2.0;
+
+            // Player Box (moves along X axis)
+            let pPlayer = {x: p.x - playerX, y: p.y - (-1), z: p.z - (-2)};
+            let dPlayer = sdBox(pPlayer, {x: 0.6, y: 0.6, z: 0.6});
+            d = Math.min(d, dPlayer);
+
+            // Obstacle Boxes
+            for (let i = 0; i < obstacles.length; i++) {
+                let obs = obstacles[i];
+                let pObs = {x: p.x - obs.x, y: p.y - obs.y, z: p.z - obs.z};
+                
+                // Add continuous rotation to obstacles for a chaotic 3D look
+                pObs = rotY(pObs, time * 2.5 + i);
+                pObs = rotX(pObs, time * 2.0 + i);
+                
+                let dObs = sdBox(pObs, {x: obs.w, y: obs.h, z: obs.d});
+                d = Math.min(d, dObs);
+            }
+            return d;
+        }
+
+        // Calculate 3D surface normal for lighting
+        function calcNormal(p) {
+            const e = 0.01;
+            const d = mapScene(p);
+            return {
+                x: mapScene({x: p.x + e, y: p.y, z: p.z}) - d,
+                y: mapScene({x: p.x, y: p.y + e, z: p.z}) - d,
+                z: mapScene({x: p.x, y: p.y, z: p.z + e}) - d
+            };
+        }
+
+        function normalize(v) {
+            let l = length(v.x, v.y, v.z);
+            if (l === 0) return {x:0, y:0, z:0};
+            return {x: v.x/l, y: v.y/l, z: v.z/l};
+        }
+
+        // --- The ASCII Renderer ---
+        function renderFrame() {
+            let output = "";
+            let lightDir = normalize({x: -1, y: 2.5, z: -1});
+            
+            // Camera position
+            let ro = {x: 0, y: 1.5, z: -8}; 
+            let camPitch = 0.25; // Tilt camera down slightly
+
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    // Map x,y grid to -1 to 1 UV coordinates
+                    let uvX = (x / width) * 2 - 1;
+                    let uvY = (y / height) * 2 - 1;
+                    
+                    uvX *= aspectAdjustment; // Fix stretching
+
+                    // Ray direction
+                    let rd = normalize({x: uvX, y: uvY, z: 1.0});
+                    rd = rotX(rd, camPitch); // Apply camera pitch
+
+                    // Raymarching loop (Find intersection)
+                    let t = 0;
+                    let hit = false;
+                    for (let i = 0; i < 40; i++) {
+                        let p = {x: ro.x + rd.x * t, y: ro.y + rd.y * t, z: ro.z + rd.z * t};
+                        let d = mapScene(p);
+                        if (d < 0.01) { hit = true; break; }
+                        t += d;
+                        if (t > 35.0) break; // Out of bounds
+                    }
+
+                    if (hit) {
+                        let p = {x: ro.x + rd.x * t, y: ro.y + rd.y * t, z: ro.z + rd.z * t};
+                        let n = normalize(calcNormal(p));
+                        
+                        // Diffuse lighting calculation (dot product)
+                        let diff = Math.max(0, n.x * lightDir.x + n.y * lightDir.y + n.z * lightDir.z);
+                        let intensity = 0.15 + diff * 0.85;
+
+                        // Calculate Soft Shadows
+                        let shadowHit = false;
+                        let st = 0.05;
+                        for(let i=0; i < 15; i++) {
+                            let sp = {x: p.x + lightDir.x * st, y: p.y + lightDir.y * st, z: p.z + lightDir.z * st};
+                            let sd = mapScene(sp);
+                            if(sd < 0.01) { shadowHit = true; break; }
+                            st += sd;
+                            if(st > 10.0) break;
+                        }
+                        if (shadowHit) intensity *= 0.35; // Darken if in shadow
+
+                        // Add a scrolling checkerboard pattern to the ground for speed effect
+                        if (Math.abs(p.y - (-2.0)) < 0.05) {
+                            let gridX = Math.floor(p.x * 2.0) % 2;
+                            let gridZ = Math.floor((p.z - time * 5.0) * 2.0) % 2; // Moving grid
+                            if ((gridX === 0) !== (gridZ === 0)) intensity *= 0.4;
+                        }
+
+                        // Map final light intensity to an ASCII character
+                        let charIndex = Math.max(0, Math.min(chars.length - 1, Math.floor(intensity * chars.length)));
+                        output += chars[charIndex];
+                    } else {
+                        // Empty space
+                        output += " ";
+                    }
+                }
+                output += "\n";
+            }
+            
+            // Inject Game Over text directly into the center of the rendered string
+            if (gameOver) {
+                let lines = output.split('\n');
+                let goText = "    GAME OVER - SCORE: " + score + " - PRESS ENTER TO RESTART    ";
+                let midY = Math.floor(height / 2);
+                let startX = Math.floor((width - goText.length) / 2);
+                
+                // Splice the string into the middle line
+                lines[midY] = lines[midY].substring(0, startX) + goText + lines[midY].substring(startX + goText.length);
+                output = lines.join('\n');
+            }
+
+            // Write the entire frame to the textarea at once!
+            screen.value = output;
+        }
+
+        // --- Main Game Loop ---
+        function gameLoop() {
+            if (!gameOver) {
+                // Smooth player movement interpolation
+                playerX += (targetPlayerX - playerX) * 0.25;
+
+                // Spawning Obstacles
+                if (Math.random() < 0.06 + (score * 0.001)) {
+                    // Random lane (-3 to 3)
+                    let ox = (Math.floor(Math.random() * 5) - 2) * 1.8;
+                    obstacles.push({x: ox, y: -1, z: 25, w: 0.7, h: 0.7, d: 0.7});
+                }
+
+                // Move obstacles forward and check collisions
+                for (let i = obstacles.length - 1; i >= 0; i--) {
+                    let obs = obstacles[i];
+                    obs.z -= speed;
+
+                    // AABB Collision check
+                    if (Math.abs(obs.x - playerX) < 1.3 && 
+                        Math.abs(obs.z - (-2.0)) < 1.3) {
+                        gameOver = true;
+                    }
+
+                    // Remove obstacles that passed the camera
+                    if (obs.z < -6) {
+                        obstacles.splice(i, 1);
+                        score++;
+                        scoreEl.innerText = score;
+                        speed += 0.005; // Slowly increase difficulty
+                    }
+                }
+
+                time += 0.05;
+            }
+
+            // Draw the 3D text frame
+            renderFrame();
+            
+            // Loop recursively
+            if (!gameOver) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        // Start the engine
+        gameLoop();
+    </script>
+</body>
+</html>
